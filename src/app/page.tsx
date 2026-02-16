@@ -184,9 +184,17 @@ export default function Home() {
 
     const blob = await zip.generateAsync({ type: "blob" });
     if (typeof window !== "undefined" && window.gtag) {
-      window.gtag("event", "clip_download_bulk", {
-        clip_count: clipsToDownload.length,
-      });
+      for (const clip of clipsToDownload) {
+        window.gtag("event", "clip_download_bulk", {
+          streamer_id: clip.broadcaster_id,
+          streamer_name: clip.broadcaster_name,
+          clip_id: clip.id,
+          clip_name: clip.title,
+          clip_date: clip.created_at,
+          clip_duration: clip.duration,
+          clip_count: clipsToDownload.length,
+        });
+      }
     }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
