@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Twitch LoL Clips FR
 
-## Getting Started
+Agrégateur de clips Twitch francophones pour **League of Legends**. Récupère automatiquement tous les clips FR des 3 derniers jours via l'API Twitch Helix.
 
-First, run the development server:
+## Fonctionnalités
+
+- **Tous les clips FR** des 3 derniers jours, récupérés en parallèle
+- **Player intégré** Twitch avec liste défilante
+- **Filtres** par date, par streamer (multi-sélection avec autocomplete)
+- **Groupes de streamers** sauvegardés en localStorage
+- **Tri** par nombre de vues ou par date
+- **Téléchargement** individuel ou en masse (ZIP)
+- **Sélection par checkbox** pour télécharger une sélection précise
+- **Durée** affichée pour chaque clip
+- Interface responsive (desktop + mobile)
+
+## Stack
+
+- **Next.js 15** (App Router) + TypeScript
+- **Tailwind CSS v4**
+- **JSZip** pour le téléchargement en masse
+- **Vercel** pour l'hébergement
+
+## Installation
+
+```bash
+git clone https://github.com/7cbr/twitch-lol-clips-fr.git
+cd twitch-lol-clips-fr
+npm install
+```
+
+Créer un fichier `.env.local` à la racine :
+
+```env
+TWITCH_CLIENT_ID=ton_client_id
+TWITCH_CLIENT_SECRET=ton_client_secret
+```
+
+> Les identifiants s'obtiennent sur [dev.twitch.tv/console](https://dev.twitch.tv/console) en créant une application.
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+L'app tourne sur [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Déploiement Vercel
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Push le repo sur GitHub
+2. Importe le projet sur [vercel.com](https://vercel.com)
+3. Ajoute les variables d'environnement `TWITCH_CLIENT_ID` et `TWITCH_CLIENT_SECRET`
+4. Deploy
 
-## Learn More
+Chaque push sur `main` déclenche un redéploiement automatique.
 
-To learn more about Next.js, take a look at the following resources:
+## Structure
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+├── app/
+│   ├── page.tsx              # Page principale (player + liste clips)
+│   └── api/
+│       ├── clips/route.ts    # GET /api/clips - tous les clips FR LoL
+│       └── download/route.ts # GET /api/download - proxy téléchargement MP4
+├── components/
+│   └── StreamerFilter.tsx    # Multi-select streamers + groupes
+├── lib/
+│   ├── twitch.ts             # Client API Twitch (OAuth + fetch clips)
+│   └── constants.ts          # Game ID LoL, nombre de jours
+└── types/
+    └── twitch.ts             # Types TypeScript
+```
