@@ -255,6 +255,16 @@ export default function Home() {
         <button
           onClick={() => {
             setSelected(clip);
+            if (typeof window !== "undefined" && window.gtag) {
+              window.gtag("event", "clip_click", {
+                streamer_id: clip.broadcaster_id,
+                streamer_name: clip.broadcaster_name,
+                clip_id: clip.id,
+                clip_name: clip.title,
+                clip_date: clip.created_at,
+                clip_duration: clip.duration,
+              });
+            }
             if (isMobile) window.scrollTo({ top: 0, behavior: "smooth" });
           }}
           className="flex gap-3 flex-1 min-w-0 text-left"
