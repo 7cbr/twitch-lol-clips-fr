@@ -184,8 +184,10 @@ export default function Home() {
 
     const blob = await zip.generateAsync({ type: "blob" });
     if (typeof window !== "undefined" && window.gtag) {
+      const bulkId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       for (const clip of clipsToDownload) {
         window.gtag("event", "clip_download_bulk", {
+          bulk_download_id: bulkId,
           streamer_id: clip.broadcaster_id,
           streamer_name: clip.broadcaster_name,
           clip_id: clip.id,
