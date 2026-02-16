@@ -183,6 +183,11 @@ export default function Home() {
     }
 
     const blob = await zip.generateAsync({ type: "blob" });
+    if (typeof window !== "undefined" && window.gtag) {
+      window.gtag("event", "clip_download_bulk", {
+        clip_count: clipsToDownload.length,
+      });
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -193,6 +198,16 @@ export default function Home() {
   }, [downloadingAll, clipsToDownload]);
 
   function handleDownload(clip: TwitchClip) {
+    if (typeof window !== "undefined" && window.gtag) {
+      window.gtag("event", "clip_download", {
+        streamer_id: clip.broadcaster_id,
+        streamer_name: clip.broadcaster_name,
+        clip_id: clip.id,
+        clip_name: clip.title,
+        clip_date: clip.created_at,
+        clip_duration: clip.duration,
+      });
+    }
     const filename = clipFilename(clip);
     const url = `/api/download?url=${encodeURIComponent(clip.thumbnail_url)}&filename=${encodeURIComponent(filename)}`;
     const a = document.createElement("a");
