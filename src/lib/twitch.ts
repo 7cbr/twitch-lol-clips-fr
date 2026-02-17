@@ -74,19 +74,41 @@ async function fetchClipsForRange(
 export async function getAllFrenchClips(): Promise<TwitchClip[]> {
   const now = new Date();
 
-  // Split into 1-day ranges and fetch in parallel
+  // Split into 30-minute ranges to work around Twitch API pagination limits.
+  // The API stops returning cursors after ~1000 results per query.
+  // During prime time, even 1-hour windows can exceed 1000 global LoL clips,
+  // burying low-view FR clips. 30-min windows keep each query well under the limit.
+  // d=0 is today, d=1 is yesterday, ..., d=DAYS_TO_FETCH is 3 days ago
+  const MINUTES_PER_RANGE = 30;
   const ranges: { start: string; end: string }[] = [];
-  for (let d = 0; d < DAYS_TO_FETCH; d++) {
-    const end = new Date(now);
-    end.setDate(end.getDate() - d);
-    const start = new Date(now);
-    start.setDate(start.getDate() - d - 1);
-    ranges.push({ start: start.toISOString(), end: end.toISOString() });
+  for (let d = 0; d <= DAYS_TO_FETCH; d++) {
+    for (let m = 0; m < 24 * 60; m += MINUTES_PER_RANGE) {
+      const start = new Date(now);
+      start.setDate(start.getDate() - d);
+      start.setHours(0, 0, 0, 0);
+      start.setMinutes(m);
+      const end = new Date(start.getTime() + MINUTES_PER_RANGE * 60 * 1000);
+      // Skip future ranges
+      if (start.getTime() > now.getTime()) continue;
+      // Clamp end to now
+      if (end.getTime() > now.getTime()) {
+        ranges.push({ start: start.toISOString(), end: now.toISOString() });
+      } else {
+        ranges.push({ start: start.toISOString(), end: end.toISOString() });
+      }
+    }
   }
 
-  const results = await Promise.all(
-    ranges.map((r) => fetchClipsForRange(r.start, r.end))
-  );
+  // Fetch in batches of 15 to avoid Twitch rate limits (800 req/min)
+  const CONCURRENCY = 15;
+  const results: TwitchClip[][] = [];
+  for (let i = 0; i < ranges.length; i += CONCURRENCY) {
+    const batch = ranges.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((r) => fetchClipsForRange(r.start, r.end))
+    );
+    results.push(...batchResults);
+  }
 
   const allClips = results.flat();
 

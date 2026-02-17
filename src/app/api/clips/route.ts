@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getAllFrenchClips } from "@/lib/twitch";
 import { ClipsApiResponse } from "@/types/twitch";
 
-export const maxDuration = 30;
+export const maxDuration = 120;
 
 export async function GET() {
   try {
