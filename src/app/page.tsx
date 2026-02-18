@@ -72,10 +72,11 @@ export default function Home() {
       try {
         const res = await fetch("/api/clips");
         const data: ClipsApiResponse = await res.json();
-        setClips(data.clips);
-        setTotal(data.total);
-        setTotalViews(data.totalViews);
-        if (data.clips.length > 0) setSelected(data.clips[0]);
+        const clips = data.clips ?? [];
+        setClips(clips);
+        setTotal(data.total ?? 0);
+        setTotalViews(data.totalViews ?? 0);
+        if (clips.length > 0) setSelected(clips[0]);
       } catch (err) {
         console.error("Failed to fetch clips:", err);
       } finally {
@@ -378,7 +379,7 @@ export default function Home() {
                 sort === "date" ? "bg-purple-600 text-white" : "text-gray-400 hover:text-white"
               }`}
             >
-              Recents
+              Heure de création
             </button>
           </div>
         </div>
