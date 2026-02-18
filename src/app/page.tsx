@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from "react";
 import JSZip from "jszip";
 import { TwitchClip, ClipsApiResponse } from "@/types/twitch";
 import StreamerFilter from "@/components/StreamerFilter";
+import { useVideoAssembler } from "@/hooks/useVideoAssembler";
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -66,6 +67,7 @@ export default function Home() {
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ done: 0, total: 0 });
+  const { assemble, assembling, assembleProgress } = useVideoAssembler();
 
   useEffect(() => {
     async function load() {
@@ -237,9 +239,13 @@ export default function Home() {
     );
   }
 
+  const selectionDuration = formatDuration(
+    clipsToDownload.reduce((sum, c) => sum + c.duration, 0)
+  );
+
   const downloadLabel = checkedIds.size > 0
-    ? `Telecharger la selection (${checkedIds.size} clips)`
-    : `Telecharger tout (${filteredAndSorted.length} clips)`;
+    ? `Telecharger la selection (${checkedIds.size} clips · ${selectionDuration})`
+    : `Telecharger tout (${filteredAndSorted.length} clips · ${selectionDuration})`;
 
   /* Shared clip row renderer */
   function renderClipRow(clip: TwitchClip, isMobile: boolean) {
@@ -344,6 +350,41 @@ export default function Home() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             {downloadLabel}
+          </>
+        )}
+      </button>
+    );
+  }
+
+  /* Shared assemble button */
+  function renderAssembleButton() {
+    if (checkedIds.size < 2 && !assembling) return null;
+
+    const checkedDuration = formatDuration(
+      filteredAndSorted.filter((c) => checkedIds.has(c.id)).reduce((sum, c) => sum + c.duration, 0)
+    );
+
+    return (
+      <button
+        onClick={() => assemble(filteredAndSorted.filter((c) => checkedIds.has(c.id)))}
+        disabled={assembling || checkedIds.size < 2}
+        className="w-full flex items-center justify-center gap-2 mb-3 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-600/50 disabled:cursor-not-allowed text-white rounded-lg py-2 text-xs font-medium transition-colors cursor-pointer"
+      >
+        {assembling ? (
+          <>
+            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            {assembleProgress?.phase === "download"
+              ? `Telechargement ${assembleProgress.current}/${assembleProgress.total}`
+              : assembleProgress?.phase === "assemble"
+                ? "Assemblage..."
+                : "Termine !"}
+          </>
+        ) : (
+          <>
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            Assembler en video ({checkedIds.size} clips · {checkedDuration})
           </>
         )}
       </button>
@@ -493,6 +534,7 @@ export default function Home() {
             {renderListHeader()}
             {renderFilters()}
             {renderDownloadButton()}
+            {renderAssembleButton()}
             <div className="space-y-1 max-h-[calc(100vh-300px)] overflow-y-auto pr-1">
               {filteredAndSorted.map((clip) => renderClipRow(clip, false))}
             </div>
@@ -505,6 +547,7 @@ export default function Home() {
         {renderListHeader()}
         {renderFilters()}
         {renderDownloadButton()}
+        {renderAssembleButton()}
         <div className="space-y-1">
           {filteredAndSorted.map((clip) => renderClipRow(clip, true))}
         </div>
