@@ -2,6 +2,7 @@ import {
   TwitchTokenResponse,
   TwitchClip,
   TwitchPaginatedResponse,
+  FollowerCounts,
 } from "@/types/twitch";
 import { LOL_GAME_ID, DAYS_TO_FETCH } from "./constants";
 
@@ -69,6 +70,36 @@ async function fetchClipsForRange(
   }
 
   return clips;
+}
+
+export async function getFollowerCounts(
+  broadcasterIds: string[]
+): Promise<FollowerCounts> {
+  const counts: FollowerCounts = {};
+  const CONCURRENCY = 15;
+
+  for (let i = 0; i < broadcasterIds.length; i += CONCURRENCY) {
+    const batch = broadcasterIds.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(
+      batch.map(async (id) => {
+        try {
+          const res = await twitchFetch(
+            `https://api.twitch.tv/helix/channels/followers?broadcaster_id=${id}`
+          );
+          if (!res.ok) return { id, total: 0 };
+          const data = await res.json();
+          return { id, total: data.total ?? 0 };
+        } catch {
+          return { id, total: 0 };
+        }
+      })
+    );
+    for (const r of results) {
+      counts[r.id] = r.total;
+    }
+  }
+
+  return counts;
 }
 
 export async function getAllFrenchClips(): Promise<TwitchClip[]> {

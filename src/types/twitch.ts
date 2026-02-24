@@ -30,8 +30,11 @@ export interface TwitchPaginatedResponse<T> {
   };
 }
 
+export type FollowerCounts = Record<string, number>;
+
 export interface ClipsApiResponse {
   clips: TwitchClip[];
   total: number;
   totalViews: number;
+  followerCounts: FollowerCounts;
 }

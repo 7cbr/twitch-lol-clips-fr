@@ -26,12 +26,22 @@ interface StreamerFilterProps {
   allStreamers: string[];
   selected: string[];
   onChange: (selected: string[]) => void;
+  followerCounts?: Record<string, number>;
+  clipCounts?: Record<string, number>;
+}
+
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${n}`;
 }
 
 export default function StreamerFilter({
   allStreamers,
   selected,
   onChange,
+  followerCounts,
+  clipCounts,
 }: StreamerFilterProps) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -58,13 +68,20 @@ export default function StreamerFilter({
   }, []);
 
   const suggestions = useMemo(() => {
-    if (!query.trim())
-      return allStreamers.filter((s) => !selected.includes(s));
-    const q = query.toLowerCase();
-    return allStreamers.filter(
-      (s) => s.toLowerCase().includes(q) && !selected.includes(s)
-    );
-  }, [allStreamers, query, selected]);
+    let list: string[];
+    if (!query.trim()) {
+      list = allStreamers.filter((s) => !selected.includes(s));
+    } else {
+      const q = query.toLowerCase();
+      list = allStreamers.filter(
+        (s) => s.toLowerCase().includes(q) && !selected.includes(s)
+      );
+    }
+    if (followerCounts) {
+      list.sort((a, b) => (followerCounts[b] ?? 0) - (followerCounts[a] ?? 0));
+    }
+    return list;
+  }, [allStreamers, query, selected, followerCounts]);
 
   function addStreamer(name: string) {
     onChange([...selected, name]);
@@ -238,9 +255,27 @@ export default function StreamerFilter({
             <button
               key={name}
               onClick={() => addStreamer(name)}
-              className="w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-purple-600/20 hover:text-white transition-colors"
+              className="w-full flex items-center justify-between px-3 py-1.5 text-xs text-gray-300 hover:bg-purple-600/20 hover:text-white transition-colors"
             >
-              {name}
+              <span>{name}</span>
+              <span className="flex items-center gap-2 ml-2">
+                {clipCounts?.[name] != null && (
+                  <span className="text-gray-500 flex items-center gap-0.5">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M2 6a2 2 0 012-2h6a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6zm12.553 1.106A1 1 0 0014 8v4a1 1 0 00.553.894l2 1A1 1 0 0018 13V7a1 1 0 00-1.447-.894l-2 1z" />
+                    </svg>
+                    {clipCounts[name]}
+                  </span>
+                )}
+                {followerCounts?.[name] != null && (
+                  <span className="text-purple-400 flex items-center gap-0.5">
+                    <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v1h8v-1zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-1a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 17v1h-3zM4.75 14.094A5.973 5.973 0 004 17v1H1v-1a3 3 0 013.75-2.906z" />
+                    </svg>
+                    {formatFollowers(followerCounts[name])}
+                  </span>
+                )}
+              </span>
             </button>
           ))}
         </div>

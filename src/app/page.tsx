@@ -39,6 +39,12 @@ function formatDuration(seconds: number): string {
   return rest > 0 ? `${m}m${rest.toString().padStart(2, "0")}s` : `${m}m`;
 }
 
+function formatFollowers(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
+  return `${n}`;
+}
+
 function getParentDomain(): string {
   if (typeof window === "undefined") return "localhost";
   return window.location.hostname;
@@ -52,7 +58,7 @@ function clipFilename(clip: TwitchClip): string {
   return `${safe(clip.title)} - ${safe(clip.creator_name)} - ${safe(date)} ${time}.mp4`;
 }
 
-type SortMode = "views" | "date";
+type SortMode = "views" | "date" | "followers";
 
 export default function Home() {
   const [clips, setClips] = useState<TwitchClip[]>([]);
@@ -64,6 +70,7 @@ export default function Home() {
   const [filterDate, setFilterDate] = useState<string>("");
   const [filterStreamers, setFilterStreamers] = useState<string[]>([]);
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [followerCounts, setFollowerCounts] = useState<Record<string, number>>({});
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState({ done: 0, total: 0 });
 
@@ -76,6 +83,7 @@ export default function Home() {
         setClips(clips);
         setTotal(data.total ?? 0);
         setTotalViews(data.totalViews ?? 0);
+        setFollowerCounts(data.followerCounts ?? {});
         if (clips.length > 0) setSelected(clips[0]);
       } catch (err) {
         console.error("Failed to fetch clips:", err);
@@ -90,6 +98,24 @@ export default function Home() {
     const names = [...new Set(clips.map((c) => c.broadcaster_name))];
     names.sort((a, b) => a.localeCompare(b, "fr"));
     return names;
+  }, [clips]);
+
+  const streamerFollowersByName = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const clip of clips) {
+      if (followerCounts[clip.broadcaster_id] != null && !(clip.broadcaster_name in map)) {
+        map[clip.broadcaster_name] = followerCounts[clip.broadcaster_id];
+      }
+    }
+    return map;
+  }, [clips, followerCounts]);
+
+  const clipCountsByStreamer = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const clip of clips) {
+      map[clip.broadcaster_name] = (map[clip.broadcaster_name] ?? 0) + 1;
+    }
+    return map;
   }, [clips]);
 
   const availableDates = useMemo(() => {
@@ -114,11 +140,13 @@ export default function Home() {
     const sorted = [...filtered];
     if (sort === "date") {
       sorted.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    } else if (sort === "followers") {
+      sorted.sort((a, b) => (followerCounts[b.broadcaster_id] ?? 0) - (followerCounts[a.broadcaster_id] ?? 0));
     } else {
       sorted.sort((a, b) => b.view_count - a.view_count);
     }
     return sorted;
-  }, [clips, sort, filterDate, filterStreamers]);
+  }, [clips, sort, filterDate, filterStreamers, followerCounts]);
 
   // Reset checked when filters change
   useEffect(() => {
@@ -316,7 +344,17 @@ export default function Home() {
             <p className="text-sm font-medium text-white line-clamp-2 leading-tight">
               {clip.title}
             </p>
-            <p className="text-xs text-gray-400 mt-1">{clip.broadcaster_name}</p>
+            <p className="text-xs text-white mt-1 flex items-center gap-1.5">
+              {clip.broadcaster_name}
+              {followerCounts[clip.broadcaster_id] != null && (
+                <span className="text-purple-400 flex items-center gap-0.5">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v1h8v-1zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-1a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 17v1h-3zM4.75 14.094A5.973 5.973 0 004 17v1H1v-1a3 3 0 013.75-2.906z" />
+                  </svg>
+                  {formatFollowers(followerCounts[clip.broadcaster_id])}
+                </span>
+              )}
+            </p>
             <p className="text-xs text-gray-500">
               {clip.creator_name} · {formatDate(clip.created_at)} · <span className="text-gray-400">{formatDuration(clip.duration)}</span>
             </p>
@@ -381,6 +419,14 @@ export default function Home() {
             >
               Heure de création
             </button>
+            <button
+              onClick={() => setSort("followers")}
+              className={`px-2.5 py-1 text-xs rounded-md transition-colors ${
+                sort === "followers" ? "bg-purple-600 text-white" : "text-gray-400 hover:text-white"
+              }`}
+            >
+              Popularité
+            </button>
           </div>
         </div>
         <span className="text-xs text-gray-500">
@@ -399,6 +445,8 @@ export default function Home() {
           allStreamers={streamerNames}
           selected={filterStreamers}
           onChange={setFilterStreamers}
+          followerCounts={streamerFollowersByName}
+          clipCounts={clipCountsByStreamer}
         />
         <select
           value={filterDate}
@@ -448,6 +496,14 @@ export default function Home() {
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" /></svg>
                       {selected.broadcaster_name}
                     </span>
+                    {followerCounts[selected.broadcaster_id] != null && (
+                      <span className="flex items-center gap-1 text-purple-400">
+                        <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v1h8v-1zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-1a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 17v1h-3zM4.75 14.094A5.973 5.973 0 004 17v1H1v-1a3 3 0 013.75-2.906z" />
+                        </svg>
+                        {formatFollowers(followerCounts[selected.broadcaster_id])}
+                      </span>
+                    )}
                     <span className="flex items-center gap-1">
                       <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zm-2.207 2.207L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" /></svg>
                       {selected.creator_name}
