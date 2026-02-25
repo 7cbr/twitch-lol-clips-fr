@@ -7,10 +7,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "url required" }, { status: 400 });
   }
 
-  // Derive MP4 URL from thumbnail URL
-  // Format: https://clips-media-assets2.twitch.tv/.../...-preview-480x272.jpg
-  // Video:  https://clips-media-assets2.twitch.tv/.../....mp4
-  const mp4Url = url.replace(/-preview-\d+x\d+\.\w+(\?.*)?$/, ".mp4");
+  // Derive MP4 URL from thumbnail URL.
+  // Twitch moved thumbnails to static-cdn.jtvnw.net but MP4s still live on
+  // clips-media-assets2.twitch.tv. Extract the clip slug and build the MP4 URL.
+  let mp4Url: string;
+  const jtvnwMatch = url.match(
+    /static-cdn\.jtvnw\.net\/twitch-clips\/(.+?)-preview-\d+x\d+\.\w+/
+  );
+  if (jtvnwMatch) {
+    mp4Url = `https://clips-media-assets2.twitch.tv/${jtvnwMatch[1]}.mp4`;
+  } else {
+    // Legacy format: clips-media-assets2.twitch.tv/...-preview-480x272.jpg
+    mp4Url = url.replace(/-preview-\d+x\d+\.\w+(\?.*)?$/, ".mp4");
+  }
 
   try {
     const res = await fetch(mp4Url);
