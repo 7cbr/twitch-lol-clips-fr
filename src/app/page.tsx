@@ -195,7 +195,7 @@ export default function Home() {
       const batch = clipsToDownload.slice(i, i + 3);
       const results = await Promise.allSettled(
         batch.map(async (clip) => {
-          const url = `/api/download?url=${encodeURIComponent(clip.thumbnail_url)}`;
+          const url = `/api/download?slug=${encodeURIComponent(clip.id)}`;
           const res = await fetch(url);
           if (!res.ok) throw new Error(`Failed: ${clip.title}`);
           return { clip, blob: await res.blob() };
@@ -248,7 +248,7 @@ export default function Home() {
       });
     }
     const filename = clipFilename(clip);
-    const url = `/api/download?url=${encodeURIComponent(clip.thumbnail_url)}&filename=${encodeURIComponent(filename)}`;
+    const url = `/api/download?slug=${encodeURIComponent(clip.id)}&filename=${encodeURIComponent(filename)}`;
     const a = document.createElement("a");
     a.href = url;
     a.download = filename;
