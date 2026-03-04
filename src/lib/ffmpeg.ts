@@ -1,7 +1,11 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL } from "@ffmpeg/util";
+import { toBlobURL, fetchFile } from "@ffmpeg/util";
 
 let ffmpegInstance: FFmpeg | null = null;
+let fontLoaded = false;
+
+const FONT_URL =
+  "https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.ttf";
 
 export async function getFFmpeg(
   onProgress?: (ratio: number) => void
@@ -16,6 +20,11 @@ export async function getFFmpeg(
     });
   }
 
+  // Log ffmpeg output for debugging
+  ffmpeg.on("log", ({ message }) => {
+    console.log("[ffmpeg]", message);
+  });
+
   // Single-threaded UMD core — no SharedArrayBuffer / COOP/COEP needed
   const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
   await ffmpeg.load({
@@ -25,6 +34,17 @@ export async function getFFmpeg(
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
+}
+
+async function ensureFont(ffmpeg: FFmpeg): Promise<void> {
+  if (fontLoaded) return;
+  try {
+    const fontData = await fetchFile(FONT_URL);
+    await ffmpeg.writeFile("font.ttf", fontData);
+    fontLoaded = true;
+  } catch (err) {
+    console.warn("Failed to load font, drawtext will be skipped:", err);
+  }
 }
 
 export interface ConcatInput {
@@ -42,6 +62,12 @@ export async function concatenateClips(
     await ffmpeg.writeFile(input.filename, input.data);
   }
 
+  // Load font for text overlays
+  const hasStreamers = inputs.some((i) => i.streamerName);
+  if (hasStreamers) {
+    await ensureFont(ffmpeg);
+  }
+
   // Build filter_complex: scale each clip to 1920x1080 with padding, add streamer name, then concat
   const filterParts: string[] = [];
   const streamLabels: string[] = [];
@@ -49,7 +75,7 @@ export async function concatenateClips(
   for (let i = 0; i < inputs.length; i++) {
     const scaleAndPad = `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1`;
 
-    if (inputs[i].streamerName) {
+    if (inputs[i].streamerName && fontLoaded) {
       // Escape special characters for drawtext
       const name = inputs[i].streamerName!
         .replace(/\\/g, "\\\\")
@@ -58,7 +84,7 @@ export async function concatenateClips(
         .replace(/;/g, "\\;");
 
       filterParts.push(
-        `${scaleAndPad},drawtext=text='${name}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=w-tw-30:y=30[v${i}]`
+        `${scaleAndPad},drawtext=fontfile=font.ttf:text='${name}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=w-tw-30:y=30[v${i}]`
       );
     } else {
       filterParts.push(`${scaleAndPad}[v${i}]`);
@@ -90,7 +116,14 @@ export async function concatenateClips(
     "output.mp4"
   );
 
-  await ffmpeg.exec(args);
+  const exitCode = await ffmpeg.exec(args);
+  if (exitCode !== 0) {
+    // Clean up before throwing
+    for (const input of inputs) {
+      try { await ffmpeg.deleteFile(input.filename); } catch { /* ignore */ }
+    }
+    throw new Error(`FFmpeg a echoue (code ${exitCode}). Verifiez la console pour les details.`);
+  }
 
   const data = await ffmpeg.readFile("output.mp4");
 
