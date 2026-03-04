@@ -28,7 +28,7 @@ export async function getFFmpeg(
 
   if (canMT) {
     try {
-      const mtURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm";
+      const mtURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/umd";
       console.log("[ffmpeg] Trying multi-threaded core...");
       await ffmpeg.load({
         coreURL: await toBlobURL(`${mtURL}/ffmpeg-core.js`, "text/javascript"),
