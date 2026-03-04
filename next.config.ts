@@ -7,15 +7,8 @@ const nextConfig: NextConfig = {
       { hostname: "static-cdn.jtvnw.net" },
     ],
   },
-  headers: async () => [
-    {
-      source: "/montage",
-      headers: [
-        { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-        { key: "Cross-Origin-Embedder-Policy", value: "credentialless" },
-      ],
-    },
-  ],
+  // NOTE: COOP/COEP headers removed — multi-threaded ffmpeg core disabled
+  // (deadlocks on complex filter_complex). Re-add when re-enabling MT core.
 };
 
 export default nextConfig;

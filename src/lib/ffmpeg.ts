@@ -21,36 +21,18 @@ export async function getFFmpeg(
     console.log("[ffmpeg]", message);
   });
 
-  // Try multi-threaded ESM core if SharedArrayBuffer is available (COOP/COEP headers)
-  // Fall back to single-threaded UMD core if MT fails or is unavailable
-  const canMT = typeof SharedArrayBuffer !== "undefined";
-  let loaded = false;
-
-  if (canMT) {
-    try {
-      const mtURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/umd";
-      console.log("[ffmpeg] Trying multi-threaded core...");
-      await ffmpeg.load({
-        coreURL: await toBlobURL(`${mtURL}/ffmpeg-core.js`, "text/javascript"),
-        wasmURL: await toBlobURL(`${mtURL}/ffmpeg-core.wasm`, "application/wasm"),
-        workerURL: await toBlobURL(`${mtURL}/ffmpeg-core.worker.js`, "text/javascript"),
-      });
-      console.log("[ffmpeg] Multi-threaded core loaded");
-      loaded = true;
-    } catch (err) {
-      console.warn("[ffmpeg] Multi-threaded core failed, falling back to single-threaded:", err);
-    }
-  }
-
-  if (!loaded) {
-    const stURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
-    console.log("[ffmpeg] Loading single-threaded core");
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${stURL}/ffmpeg-core.js`, "text/javascript"),
-      wasmURL: await toBlobURL(`${stURL}/ffmpeg-core.wasm`, "application/wasm"),
-    });
-    console.log("[ffmpeg] Single-threaded core loaded");
-  }
+  // NOTE: Multi-threaded core (@ffmpeg/core-mt) is disabled because it deadlocks
+  // on complex filter_complex with many inputs (10+ clips). The pthreads-based
+  // filter graph execution hangs in the WASM environment.
+  // The 720p resolution already provides significant speedup.
+  // Re-enable when ffmpeg.wasm fixes this issue.
+  const stURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+  console.log("[ffmpeg] Loading single-threaded core");
+  await ffmpeg.load({
+    coreURL: await toBlobURL(`${stURL}/ffmpeg-core.js`, "text/javascript"),
+    wasmURL: await toBlobURL(`${stURL}/ffmpeg-core.wasm`, "application/wasm"),
+  });
+  console.log("[ffmpeg] Single-threaded core loaded");
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
