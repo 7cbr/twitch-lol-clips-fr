@@ -124,42 +124,11 @@ export async function concatenateClips(
 
   const useTransition = transition && transition.type !== "none" && inputs.length >= 2;
 
-  // ─── Fast path: concat demuxer (no re-encoding) ───
-  // When there are no transitions, try to copy streams directly — ~90% faster
-  // Falls back to re-encode if concat demuxer fails (incompatible formats)
-  if (!useTransition) {
-    console.log("[ffmpeg] Trying concat demuxer (no re-encoding)...");
-    const concatList = inputs.map((i) => `file '${i.filename}'`).join("\n");
-    await ffmpeg.writeFile("concat.txt", concatList);
-
-    const exitCode = await ffmpeg.exec([
-      "-f", "concat", "-safe", "0", "-i", "concat.txt",
-      "-c", "copy", "output.mp4",
-    ]);
-
-    if (exitCode === 0) {
-      console.log("[ffmpeg] Concat demuxer succeeded");
-      if (onFinalize) onFinalize();
-      const data = await ffmpeg.readFile("output.mp4");
-
-      // Cleanup
-      for (const input of inputs) { await ffmpeg.deleteFile(input.filename); }
-      await ffmpeg.deleteFile("concat.txt");
-      await ffmpeg.deleteFile("output.mp4");
-
-      const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
-      return new Blob([bytes as BlobPart], { type: "video/mp4" });
-    }
-
-    // Concat demuxer failed (incompatible formats), fall back to re-encode
-    console.warn("[ffmpeg] Concat demuxer failed, falling back to re-encode...");
-    try { await ffmpeg.deleteFile("concat.txt"); } catch { /* ignore */ }
-    try { await ffmpeg.deleteFile("output.mp4"); } catch { /* ignore */ }
-    // Files are still in the FS, continue to re-encode path below
-  }
-
-  // ─── Re-encode path: filter_complex (with or without transitions) ───
-  console.log(`[ffmpeg] Using filter_complex ${useTransition ? "with xfade transitions" : "(re-encode fallback)"}`);
+  // ─── Re-encode path: filter_complex ───
+  // Always re-encode to normalize fps/resolution across clips from different streamers.
+  // Concat demuxer (-c copy) can't be used because Twitch clips have varying fps
+  // (30/60) which causes playback speed issues when copied without re-encoding.
+  console.log(`[ffmpeg] Using filter_complex ${useTransition ? "with xfade transitions" : "with concat"}`);
   const tDur = transition?.duration ?? 0.5;
 
   // Scale + pad + normalize for compatibility
