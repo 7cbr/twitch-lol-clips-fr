@@ -7,6 +7,7 @@ import { formatDate, formatDayLabel, formatDuration, formatFollowers } from "@/l
 import { getFFmpeg, concatenateClips, ConcatInput } from "@/lib/ffmpeg";
 
 type MontageStatus = "idle" | "loading-ffmpeg" | "downloading" | "concatenating" | "done" | "error";
+type SortMode = "views-desc" | "views-asc" | "date-desc" | "date-asc";
 
 export default function MontagePage() {
   const [clips, setClips] = useState<TwitchClip[]>([]);
@@ -14,6 +15,9 @@ export default function MontagePage() {
   const [followerCounts, setFollowerCounts] = useState<Record<string, number>>({});
   const [filterDate, setFilterDate] = useState("");
   const [filterStreamers, setFilterStreamers] = useState<string[]>([]);
+  const [sortMode, setSortMode] = useState<SortMode>("views-desc");
+  const [hourFrom, setHourFrom] = useState<string>("");
+  const [hourTo, setHourTo] = useState<string>("");
 
   // Timeline: ordered selection
   const [timeline, setTimeline] = useState<TwitchClip[]>([]);
@@ -86,8 +90,27 @@ export default function MontagePage() {
       const set = new Set(filterStreamers);
       filtered = filtered.filter((c) => set.has(c.broadcaster_name));
     }
-    return filtered.sort((a, b) => b.view_count - a.view_count);
-  }, [clips, filterDate, filterStreamers]);
+    if (hourFrom !== "") {
+      const from = parseInt(hourFrom, 10);
+      filtered = filtered.filter((c) => new Date(c.created_at).getHours() >= from);
+    }
+    if (hourTo !== "") {
+      const to = parseInt(hourTo, 10);
+      filtered = filtered.filter((c) => new Date(c.created_at).getHours() <= to);
+    }
+    switch (sortMode) {
+      case "views-desc":
+        return filtered.sort((a, b) => b.view_count - a.view_count);
+      case "views-asc":
+        return filtered.sort((a, b) => a.view_count - b.view_count);
+      case "date-desc":
+        return filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      case "date-asc":
+        return filtered.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      default:
+        return filtered;
+    }
+  }, [clips, filterDate, filterStreamers, sortMode, hourFrom, hourTo]);
 
   const totalDuration = useMemo(() => timeline.reduce((sum, c) => sum + c.duration, 0), [timeline]);
 
@@ -225,16 +248,64 @@ export default function MontagePage() {
                 followerCounts={streamerFollowersByName}
                 clipCounts={clipCountsByStreamer}
               />
-              <select
-                value={filterDate}
-                onChange={(e) => setFilterDate(e.target.value)}
-                className="w-full bg-[#18181b] text-gray-300 text-xs rounded-lg px-2.5 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
-              >
-                <option value="">Toutes les dates</option>
-                {availableDates.map((d) => (
-                  <option key={d} value={d}>{formatDayLabel(d)}</option>
-                ))}
-              </select>
+              <div className="flex gap-2">
+                <select
+                  value={filterDate}
+                  onChange={(e) => setFilterDate(e.target.value)}
+                  className="flex-1 bg-[#18181b] text-gray-300 text-xs rounded-lg px-2.5 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">Toutes les dates</option>
+                  {availableDates.map((d) => (
+                    <option key={d} value={d}>{formatDayLabel(d)}</option>
+                  ))}
+                </select>
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  className="flex-1 bg-[#18181b] text-gray-300 text-xs rounded-lg px-2.5 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="views-desc">Plus vus</option>
+                  <option value="views-asc">Moins vus</option>
+                  <option value="date-desc">Plus recents</option>
+                  <option value="date-asc">Plus anciens</option>
+                </select>
+              </div>
+              {/* Time range filter */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 shrink-0">Heure :</span>
+                <select
+                  value={hourFrom}
+                  onChange={(e) => setHourFrom(e.target.value)}
+                  className="flex-1 bg-[#18181b] text-gray-300 text-xs rounded-lg px-2 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">De...</option>
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={String(i)}>{String(i).padStart(2, "0")}h00</option>
+                  ))}
+                </select>
+                <span className="text-xs text-gray-600">→</span>
+                <select
+                  value={hourTo}
+                  onChange={(e) => setHourTo(e.target.value)}
+                  className="flex-1 bg-[#18181b] text-gray-300 text-xs rounded-lg px-2 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                >
+                  <option value="">A...</option>
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={String(i)}>{String(i).padStart(2, "0")}h59</option>
+                  ))}
+                </select>
+                {(hourFrom !== "" || hourTo !== "") && (
+                  <button
+                    onClick={() => { setHourFrom(""); setHourTo(""); }}
+                    className="text-gray-500 hover:text-gray-300 transition-colors"
+                    title="Reinitialiser"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between mb-2">
@@ -311,7 +382,7 @@ export default function MontagePage() {
           {/* Right: Timeline + Generation */}
           <div className="w-full lg:w-[420px] shrink-0">
             <div className="sticky top-5">
-              <h2 className="text-sm font-semibold text-gray-300 mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-gray-300 mb-2 flex items-center justify-between">
                 <span>Timeline ({timeline.length} clips)</span>
                 {totalDuration > 0 && (
                   <span className="text-xs text-gray-500 font-normal">
@@ -319,6 +390,17 @@ export default function MontagePage() {
                   </span>
                 )}
               </h2>
+              {timeline.length >= 2 && (
+                <button
+                  onClick={() => setTimeline((prev) => [...prev].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()))}
+                  className="flex items-center gap-1 text-[11px] text-gray-500 hover:text-purple-400 transition-colors mb-2 cursor-pointer"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Trier par ordre chronologique
+                </button>
+              )}
 
               {/* Timeline list */}
               {timeline.length === 0 ? (
@@ -364,6 +446,12 @@ export default function MontagePage() {
                         <p className="text-xs font-medium text-white truncate">{clip.title}</p>
                         <p className="text-[10px] text-gray-500">
                           {clip.broadcaster_name} · {formatDuration(clip.duration)}
+                        </p>
+                        <p className="text-[10px] text-gray-600 flex items-center gap-0.5">
+                          <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          {formatDate(clip.created_at)}
                         </p>
                       </div>
 
