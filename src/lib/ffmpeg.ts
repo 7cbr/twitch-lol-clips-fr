@@ -47,11 +47,34 @@ async function ensureFont(ffmpeg: FFmpeg): Promise<void> {
   }
 }
 
+/**
+ * Probe a clip's actual duration by running a quick ffmpeg pass.
+ * We use -f null to discard output and parse the duration from logs.
+ */
+async function probeDuration(ffmpeg: FFmpeg, filename: string): Promise<number> {
+  let duration = 0;
+  const handler = ({ message }: { message: string }) => {
+    // Parse "Duration: HH:MM:SS.ss" from ffmpeg logs
+    const match = message.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
+    if (match) {
+      duration =
+        parseInt(match[1]) * 3600 +
+        parseInt(match[2]) * 60 +
+        parseInt(match[3]) +
+        parseInt(match[4]) / 100;
+    }
+  };
+  ffmpeg.on("log", handler);
+  await ffmpeg.exec(["-i", filename, "-f", "null", "-"]);
+  ffmpeg.off("log", handler);
+  return duration;
+}
+
 export interface ConcatInput {
   filename: string;
   data: Uint8Array;
   streamerName?: string;
-  duration: number; // seconds
+  duration: number; // seconds (from API, used as fallback)
 }
 
 export type TransitionType =
@@ -100,11 +123,23 @@ export async function concatenateClips(
   const useTransition = transition && transition.type !== "none" && inputs.length >= 2;
   const tDur = transition?.duration ?? 0.5;
 
-  // Step 1: Scale + pad + drawtext for each clip
+  // If using transitions, probe actual durations (API durations may be rounded)
+  const actualDurations: number[] = [];
+  if (useTransition) {
+    for (const input of inputs) {
+      const probed = await probeDuration(ffmpeg, input.filename);
+      // Use probed duration if valid, otherwise fall back to API duration
+      actualDurations.push(probed > 0 ? probed : input.duration);
+    }
+  }
+
+  // Step 1: Scale + pad + normalize + drawtext for each clip
   const filterParts: string[] = [];
+  // When using xfade, we need identical fps and pixel format across all clips
+  const normalize = useTransition ? ",fps=30,format=yuv420p" : "";
 
   for (let i = 0; i < inputs.length; i++) {
-    const scaleAndPad = `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+    const scaleAndPad = `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1${normalize}`;
 
     if (inputs[i].streamerName && fontLoaded) {
       const name = inputs[i].streamerName!
@@ -121,30 +156,38 @@ export async function concatenateClips(
     }
   }
 
-  // Step 2: Video merge (xfade chain or concat)
+  // Normalize audio when using transitions (same sample rate, channels, format)
+  if (useTransition) {
+    for (let i = 0; i < inputs.length; i++) {
+      filterParts.push(
+        `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
+      );
+    }
+  }
+
+  // Step 2: Video + audio merge
   if (useTransition) {
     // Chain xfade filters between each pair of clips
-    // xfade offset = cumulative duration up to current clip minus cumulative transitions
-    let cumulativeDur = inputs[0].duration;
+    let cumulativeDur = actualDurations[0];
     let prevLabel = "v0";
 
     for (let i = 1; i < inputs.length; i++) {
-      const offset = Math.max(0, cumulativeDur - tDur);
+      // Safety margin: ensure offset doesn't exceed actual clip duration
+      const offset = Math.max(0, cumulativeDur - tDur - 0.05);
       const outLabel = i === inputs.length - 1 ? "outv" : `xf${i}`;
       filterParts.push(
         `[${prevLabel}][v${i}]xfade=transition=${transition!.type}:duration=${tDur}:offset=${offset.toFixed(3)}[${outLabel}]`
       );
-      // Next offset accounts for the overlap
-      cumulativeDur = offset + inputs[i].duration;
+      cumulativeDur = offset + actualDurations[i];
       prevLabel = outLabel;
     }
 
-    // Chain acrossfade for audio
-    let prevAudioLabel = `${0}:a`;
+    // Chain acrossfade for audio (using normalized audio labels)
+    let prevAudioLabel = `a0`;
     for (let i = 1; i < inputs.length; i++) {
       const outLabel = i === inputs.length - 1 ? "outa" : `af${i}`;
       filterParts.push(
-        `[${prevAudioLabel}][${i}:a]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
+        `[${prevAudioLabel}][a${i}]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
       );
       prevAudioLabel = outLabel;
     }
