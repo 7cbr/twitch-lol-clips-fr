@@ -30,6 +30,7 @@ export async function getFFmpeg(
 export interface ConcatInput {
   filename: string;
   data: Uint8Array;
+  streamerName?: string;
 }
 
 export async function concatenateClips(
@@ -41,14 +42,28 @@ export async function concatenateClips(
     await ffmpeg.writeFile(input.filename, input.data);
   }
 
-  // Build filter_complex: scale each clip to 1920x1080 with padding, then concat
+  // Build filter_complex: scale each clip to 1920x1080 with padding, add streamer name, then concat
   const filterParts: string[] = [];
   const streamLabels: string[] = [];
 
   for (let i = 0; i < inputs.length; i++) {
-    filterParts.push(
-      `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v${i}]`
-    );
+    const scaleAndPad = `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+
+    if (inputs[i].streamerName) {
+      // Escape special characters for drawtext
+      const name = inputs[i].streamerName!
+        .replace(/\\/g, "\\\\")
+        .replace(/'/g, "\u2019")
+        .replace(/:/g, "\\:")
+        .replace(/;/g, "\\;");
+
+      filterParts.push(
+        `${scaleAndPad},drawtext=text='${name}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=w-tw-30:y=30[v${i}]`
+      );
+    } else {
+      filterParts.push(`${scaleAndPad}[v${i}]`);
+    }
+
     streamLabels.push(`[v${i}][${i}:a]`);
   }
 
@@ -68,7 +83,7 @@ export async function concatenateClips(
     "-map", "[outa]",
     "-c:v", "libx264",
     "-preset", "ultrafast",
-    "-crf", "23",
+    "-crf", "18",
     "-c:a", "aac",
     "-b:a", "128k",
     "-movflags", "+faststart",

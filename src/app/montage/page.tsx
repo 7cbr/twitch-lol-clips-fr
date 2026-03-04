@@ -154,7 +154,7 @@ export default function MontagePage() {
         const res = await fetch(`/api/download?slug=${encodeURIComponent(clip.id)}`);
         if (!res.ok) throw new Error(`Echec du telechargement: ${clip.title}`);
         const buffer = await res.arrayBuffer();
-        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer) });
+        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name });
         setDlProgress({ done: i + 1, total: timeline.length });
       }
 
@@ -205,26 +205,11 @@ export default function MontagePage() {
     <div className="min-h-screen bg-[#0e0e10] text-white">
       {/* Header */}
       <header className="px-6 pt-5 pb-4">
-        <div className="max-w-[1600px] mx-auto flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-3">
-              <a href="/" className="text-gray-400 hover:text-white transition-colors">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                </svg>
-              </a>
-              <h1 className="text-2xl font-bold">Montage</h1>
-            </div>
-            <p className="text-sm text-gray-400 mt-1">
-              Selectionnez des clips puis generez un montage MP4
-            </p>
-          </div>
-          <a
-            href="/"
-            className="text-sm border border-gray-600 text-gray-300 rounded px-3 py-1 hover:bg-gray-700/30 transition-colors"
-          >
-            Dashboard
-          </a>
+        <div className="max-w-[1600px] mx-auto">
+          <h1 className="text-2xl font-bold">Montage</h1>
+          <p className="text-sm text-gray-400 mt-1">
+            Selectionnez des clips puis generez un montage MP4
+          </p>
         </div>
       </header>
 
