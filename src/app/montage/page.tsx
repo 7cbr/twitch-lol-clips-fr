@@ -154,7 +154,7 @@ export default function MontagePage() {
         const res = await fetch(`/api/download?slug=${encodeURIComponent(clip.id)}`);
         if (!res.ok) throw new Error(`Echec du telechargement: ${clip.title}`);
         const buffer = await res.arrayBuffer();
-        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer) });
+        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name });
         setDlProgress({ done: i + 1, total: timeline.length });
       }
 
