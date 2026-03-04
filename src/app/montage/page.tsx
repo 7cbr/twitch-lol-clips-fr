@@ -6,7 +6,7 @@ import StreamerFilter from "@/components/StreamerFilter";
 import { formatDate, formatDayLabel, formatDuration, formatFollowers } from "@/lib/format";
 import { getFFmpeg, concatenateClips, ConcatInput, TransitionType, TransitionOptions } from "@/lib/ffmpeg";
 
-type MontageStatus = "idle" | "loading-ffmpeg" | "downloading" | "concatenating" | "done" | "error";
+type MontageStatus = "idle" | "loading-ffmpeg" | "downloading" | "concatenating" | "finalizing" | "done" | "error";
 type SortMode = "views-desc" | "views-asc" | "date-desc" | "date-asc";
 
 export default function MontagePage() {
@@ -172,25 +172,35 @@ export default function MontagePage() {
     try {
       const ffmpeg = await getFFmpeg((ratio) => setConcatProgress(ratio));
 
+      // Parallel downloads (3 concurrent)
       setStatus("downloading");
       setDlProgress({ done: 0, total: timeline.length });
 
-      const inputs: ConcatInput[] = [];
-      for (let i = 0; i < timeline.length; i++) {
-        const clip = timeline[i];
+      const CONCURRENCY = 3;
+      const inputs: ConcatInput[] = new Array(timeline.length);
+      let completed = 0;
+
+      async function downloadClip(idx: number) {
+        const clip = timeline[idx];
         const res = await fetch(`/api/download?slug=${encodeURIComponent(clip.id)}`);
         if (!res.ok) throw new Error(`Echec du telechargement: ${clip.title}`);
         const buffer = await res.arrayBuffer();
-        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name, duration: clip.duration });
-        setDlProgress({ done: i + 1, total: timeline.length });
+        inputs[idx] = { filename: `clip${idx}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name, duration: clip.duration };
+        completed++;
+        setDlProgress({ done: completed, total: timeline.length });
+      }
+
+      // Process downloads in batches of CONCURRENCY
+      for (let i = 0; i < timeline.length; i += CONCURRENCY) {
+        const batch = timeline.slice(i, i + CONCURRENCY).map((_, j) => downloadClip(i + j));
+        await Promise.all(batch);
       }
 
       setStatus("concatenating");
       setConcatProgress(0);
       const transOpts: TransitionOptions | undefined =
         transitionType !== "none" ? { type: transitionType, duration: transitionDuration } : undefined;
-      const blob = await concatenateClips(ffmpeg, inputs, transOpts);
-
+      const blob = await concatenateClips(ffmpeg, inputs, transOpts, () => setStatus("finalizing"));
       if (resultUrl) URL.revokeObjectURL(resultUrl);
       setResultUrl(URL.createObjectURL(blob));
       setStatus("done");
@@ -585,6 +595,14 @@ export default function MontagePage() {
                     />
                   </div>
                   <p className="text-xs text-gray-500 mt-2">Cela peut prendre quelques minutes...</p>
+                </div>
+              )}
+
+              {status === "finalizing" && (
+                <div className="bg-[#18181b] rounded-lg p-4 text-center">
+                  <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-sm text-gray-300">Finalisation du fichier...</p>
+                  <p className="text-xs text-gray-500 mt-1">Preparation du MP4 pour le telechargement</p>
                 </div>
               )}
 

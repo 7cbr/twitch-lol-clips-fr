@@ -107,7 +107,8 @@ export interface TransitionOptions {
 export async function concatenateClips(
   ffmpeg: FFmpeg,
   inputs: ConcatInput[],
-  transition?: TransitionOptions
+  transition?: TransitionOptions,
+  onFinalize?: () => void
 ): Promise<Blob> {
   // Write all clips into the virtual filesystem
   for (const input of inputs) {
@@ -211,10 +212,9 @@ export async function concatenateClips(
     "-map", "[outa]",
     "-c:v", "libx264",
     "-preset", "ultrafast",
-    "-crf", "18",
+    "-crf", "23",
     "-c:a", "aac",
     "-b:a", "128k",
-    "-movflags", "+faststart",
     "output.mp4"
   );
 
@@ -226,6 +226,9 @@ export async function concatenateClips(
     }
     throw new Error(`FFmpeg a echoue (code ${exitCode}). Verifiez la console pour les details.`);
   }
+
+  // Notify caller that encoding is done, now reading the output file
+  if (onFinalize) onFinalize();
 
   const data = await ffmpeg.readFile("output.mp4");
 
