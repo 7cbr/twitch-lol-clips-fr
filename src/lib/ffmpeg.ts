@@ -1,11 +1,7 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { toBlobURL, fetchFile } from "@ffmpeg/util";
+import { toBlobURL } from "@ffmpeg/util";
 
 let ffmpegInstance: FFmpeg | null = null;
-let fontLoaded = false;
-
-const FONT_URL =
-  "https://cdn.jsdelivr.net/fontsource/fonts/inter@latest/latin-700-normal.ttf";
 
 export async function getFFmpeg(
   onProgress?: (ratio: number) => void
@@ -25,36 +21,33 @@ export async function getFFmpeg(
     console.log("[ffmpeg]", message);
   });
 
-  // Single-threaded UMD core — no SharedArrayBuffer / COOP/COEP needed
-  const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+  // Use multi-threaded ESM core if SharedArrayBuffer is available (COOP/COEP headers on /montage)
+  // Otherwise fall back to single-threaded UMD core
+  const mt = typeof SharedArrayBuffer !== "undefined";
+  const baseURL = mt
+    ? "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm"
+    : "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+
+  console.log(`[ffmpeg] Loading ${mt ? "multi-threaded" : "single-threaded"} core`);
+
   await ffmpeg.load({
     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
     wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+    ...(mt
+      ? { workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, "text/javascript") }
+      : {}),
   });
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
 }
 
-async function ensureFont(ffmpeg: FFmpeg): Promise<void> {
-  if (fontLoaded) return;
-  try {
-    const fontData = await fetchFile(FONT_URL);
-    await ffmpeg.writeFile("font.ttf", fontData);
-    fontLoaded = true;
-  } catch (err) {
-    console.warn("Failed to load font, drawtext will be skipped:", err);
-  }
-}
-
 /**
  * Probe a clip's actual duration by running a quick ffmpeg pass.
- * We use -f null to discard output and parse the duration from logs.
  */
 async function probeDuration(ffmpeg: FFmpeg, filename: string): Promise<number> {
   let duration = 0;
   const handler = ({ message }: { message: string }) => {
-    // Parse "Duration: HH:MM:SS.ss" from ffmpeg logs
     const match = message.match(/Duration:\s*(\d+):(\d+):(\d+)\.(\d+)/);
     if (match) {
       duration =
@@ -115,89 +108,89 @@ export async function concatenateClips(
     await ffmpeg.writeFile(input.filename, input.data);
   }
 
-  // Load font for text overlays
-  const hasStreamers = inputs.some((i) => i.streamerName);
-  if (hasStreamers) {
-    await ensureFont(ffmpeg);
-  }
-
   const useTransition = transition && transition.type !== "none" && inputs.length >= 2;
-  const tDur = transition?.duration ?? 0.5;
 
-  // If using transitions, probe actual durations (API durations may be rounded)
-  const actualDurations: number[] = [];
-  if (useTransition) {
-    for (const input of inputs) {
-      const probed = await probeDuration(ffmpeg, input.filename);
-      // Use probed duration if valid, otherwise fall back to API duration
-      actualDurations.push(probed > 0 ? probed : input.duration);
+  // ─── Fast path: concat demuxer (no re-encoding) ───
+  // When there are no transitions, just copy streams directly — ~90% faster
+  if (!useTransition) {
+    console.log("[ffmpeg] Using concat demuxer (no re-encoding)");
+    const concatList = inputs.map((i) => `file '${i.filename}'`).join("\n");
+    await ffmpeg.writeFile("concat.txt", concatList);
+
+    const exitCode = await ffmpeg.exec([
+      "-f", "concat", "-safe", "0", "-i", "concat.txt",
+      "-c", "copy", "output.mp4",
+    ]);
+
+    if (exitCode !== 0) {
+      for (const input of inputs) {
+        try { await ffmpeg.deleteFile(input.filename); } catch { /* ignore */ }
+      }
+      try { await ffmpeg.deleteFile("concat.txt"); } catch { /* ignore */ }
+      throw new Error(`FFmpeg a echoue (code ${exitCode}). Verifiez la console pour les details.`);
     }
+
+    if (onFinalize) onFinalize();
+    const data = await ffmpeg.readFile("output.mp4");
+
+    // Cleanup
+    for (const input of inputs) { await ffmpeg.deleteFile(input.filename); }
+    await ffmpeg.deleteFile("concat.txt");
+    await ffmpeg.deleteFile("output.mp4");
+
+    const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
+    return new Blob([bytes as BlobPart], { type: "video/mp4" });
   }
 
-  // Step 1: Scale + pad + normalize + drawtext for each clip
+  // ─── Full re-encode path: transitions with xfade ───
+  console.log("[ffmpeg] Using filter_complex with xfade transitions");
+  const tDur = transition.duration;
+
+  // Probe actual durations (API durations may be rounded)
+  const actualDurations: number[] = [];
+  for (const input of inputs) {
+    const probed = await probeDuration(ffmpeg, input.filename);
+    actualDurations.push(probed > 0 ? probed : input.duration);
+  }
+
+  // Scale + pad + normalize fps/format for xfade compatibility
   const filterParts: string[] = [];
-  // When using xfade, we need identical fps and pixel format across all clips
-  const normalize = useTransition ? ",fps=30,format=yuv420p" : "";
 
   for (let i = 0; i < inputs.length; i++) {
-    const scaleAndPad = `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1${normalize}`;
-
-    if (inputs[i].streamerName && fontLoaded) {
-      const name = inputs[i].streamerName!
-        .replace(/\\/g, "\\\\")
-        .replace(/'/g, "\u2019")
-        .replace(/:/g, "\\:")
-        .replace(/;/g, "\\;");
-
-      filterParts.push(
-        `${scaleAndPad},drawtext=fontfile=font.ttf:text='${name}':fontsize=36:fontcolor=white:borderw=2:bordercolor=black:x=w-tw-30:y=30[v${i}]`
-      );
-    } else {
-      filterParts.push(`${scaleAndPad}[v${i}]`);
-    }
-  }
-
-  // Normalize audio when using transitions (same sample rate, channels, format)
-  if (useTransition) {
-    for (let i = 0; i < inputs.length; i++) {
-      filterParts.push(
-        `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
-      );
-    }
-  }
-
-  // Step 2: Video + audio merge
-  if (useTransition) {
-    // Chain xfade filters between each pair of clips
-    let cumulativeDur = actualDurations[0];
-    let prevLabel = "v0";
-
-    for (let i = 1; i < inputs.length; i++) {
-      // Safety margin: ensure offset doesn't exceed actual clip duration
-      const offset = Math.max(0, cumulativeDur - tDur - 0.05);
-      const outLabel = i === inputs.length - 1 ? "outv" : `xf${i}`;
-      filterParts.push(
-        `[${prevLabel}][v${i}]xfade=transition=${transition!.type}:duration=${tDur}:offset=${offset.toFixed(3)}[${outLabel}]`
-      );
-      cumulativeDur = offset + actualDurations[i];
-      prevLabel = outLabel;
-    }
-
-    // Chain acrossfade for audio (using normalized audio labels)
-    let prevAudioLabel = `a0`;
-    for (let i = 1; i < inputs.length; i++) {
-      const outLabel = i === inputs.length - 1 ? "outa" : `af${i}`;
-      filterParts.push(
-        `[${prevAudioLabel}][a${i}]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
-      );
-      prevAudioLabel = outLabel;
-    }
-  } else {
-    // Simple concat (no transitions)
-    const streamLabels = inputs.map((_, i) => `[v${i}][${i}:a]`).join("");
     filterParts.push(
-      `${streamLabels}concat=n=${inputs.length}:v=1:a=1[outv][outa]`
+      `[${i}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v${i}]`
     );
+  }
+
+  // Normalize audio
+  for (let i = 0; i < inputs.length; i++) {
+    filterParts.push(
+      `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
+    );
+  }
+
+  // Chain xfade filters
+  let cumulativeDur = actualDurations[0];
+  let prevLabel = "v0";
+
+  for (let i = 1; i < inputs.length; i++) {
+    const offset = Math.max(0, cumulativeDur - tDur - 0.05);
+    const outLabel = i === inputs.length - 1 ? "outv" : `xf${i}`;
+    filterParts.push(
+      `[${prevLabel}][v${i}]xfade=transition=${transition.type}:duration=${tDur}:offset=${offset.toFixed(3)}[${outLabel}]`
+    );
+    cumulativeDur = offset + actualDurations[i];
+    prevLabel = outLabel;
+  }
+
+  // Chain acrossfade for audio
+  let prevAudioLabel = "a0";
+  for (let i = 1; i < inputs.length; i++) {
+    const outLabel = i === inputs.length - 1 ? "outa" : `af${i}`;
+    filterParts.push(
+      `[${prevAudioLabel}][a${i}]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
+    );
+    prevAudioLabel = outLabel;
   }
 
   const filterComplex = filterParts.join(";");
@@ -220,7 +213,6 @@ export async function concatenateClips(
 
   const exitCode = await ffmpeg.exec(args);
   if (exitCode !== 0) {
-    // Clean up before throwing
     for (const input of inputs) {
       try { await ffmpeg.deleteFile(input.filename); } catch { /* ignore */ }
     }
@@ -239,6 +231,5 @@ export async function concatenateClips(
   await ffmpeg.deleteFile("output.mp4");
 
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
-
   return new Blob([bytes as BlobPart], { type: "video/mp4" });
 }

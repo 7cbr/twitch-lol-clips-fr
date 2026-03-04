@@ -33,6 +33,7 @@ export default function MontagePage() {
   const [concatProgress, setConcatProgress] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [currentStreamer, setCurrentStreamer] = useState<string | null>(null);
 
   // Drag & drop
   const dragIdx = useRef<number | null>(null);
@@ -117,6 +118,24 @@ export default function MontagePage() {
   }, [clips, filterDate, filterStreamers, sortMode, hourFrom, hourTo]);
 
   const totalDuration = useMemo(() => timeline.reduce((sum, c) => sum + c.duration, 0), [timeline]);
+
+  // Clip timestamps for CSS overlay (start/end time of each clip in the montage)
+  const clipTimestamps = useMemo(() => {
+    const tDur = transitionType !== "none" ? transitionDuration : 0;
+    const stamps: { start: number; end: number; name: string }[] = [];
+    let cursor = 0;
+    for (const clip of timeline) {
+      stamps.push({ start: cursor, end: cursor + clip.duration, name: clip.broadcaster_name });
+      cursor += clip.duration - tDur;
+    }
+    return stamps;
+  }, [timeline, transitionType, transitionDuration]);
+
+  function handleTimeUpdate(e: React.SyntheticEvent<HTMLVideoElement>) {
+    const t = e.currentTarget.currentTime;
+    const match = clipTimestamps.find((s) => t >= s.start && t < s.end);
+    setCurrentStreamer(match?.name ?? null);
+  }
 
   // Actions
   function toggleClip(clip: TwitchClip) {
@@ -614,11 +633,22 @@ export default function MontagePage() {
                     </svg>
                     <p className="text-sm text-green-300 font-medium">Montage pret !</p>
                   </div>
-                  <video
-                    src={resultUrl}
-                    controls
-                    className="w-full rounded-lg bg-black"
-                  />
+                  <div className="relative">
+                    <video
+                      src={resultUrl}
+                      controls
+                      onTimeUpdate={handleTimeUpdate}
+                      className="w-full rounded-lg bg-black"
+                    />
+                    {currentStreamer && (
+                      <span
+                        className="absolute top-3 right-3 text-white text-sm font-bold pointer-events-none"
+                        style={{ textShadow: "1px 1px 3px rgba(0,0,0,0.9), -1px -1px 3px rgba(0,0,0,0.9)" }}
+                      >
+                        {currentStreamer}
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={handleDownloadResult}
                     className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg py-3 text-sm font-medium transition-colors cursor-pointer"
