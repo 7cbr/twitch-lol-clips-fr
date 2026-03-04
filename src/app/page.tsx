@@ -426,17 +426,9 @@ export default function Home() {
               {total} clips · {totalViews.toLocaleString("fr-FR")} vues au total
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <a
-              href="/montage"
-              className="text-sm border border-purple-500 text-purple-300 rounded px-3 py-1 hover:bg-purple-600/20 transition-colors"
-            >
-              Montage
-            </a>
-            <span className="text-sm border border-gray-600 text-gray-300 rounded px-3 py-1">
-              Francais
-            </span>
-          </div>
+          <span className="text-sm border border-gray-600 text-gray-300 rounded px-3 py-1">
+            Francais
+          </span>
         </div>
       </header>
 
