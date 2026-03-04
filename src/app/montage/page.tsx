@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { TwitchClip, ClipsApiResponse } from "@/types/twitch";
 import StreamerFilter from "@/components/StreamerFilter";
 import { formatDate, formatDayLabel, formatDuration, formatFollowers } from "@/lib/format";
-import { getFFmpeg, concatenateClips, ConcatInput } from "@/lib/ffmpeg";
+import { getFFmpeg, concatenateClips, ConcatInput, TransitionType, TransitionOptions } from "@/lib/ffmpeg";
 
 type MontageStatus = "idle" | "loading-ffmpeg" | "downloading" | "concatenating" | "done" | "error";
 type SortMode = "views-desc" | "views-asc" | "date-desc" | "date-asc";
@@ -18,6 +18,10 @@ export default function MontagePage() {
   const [sortMode, setSortMode] = useState<SortMode>("views-desc");
   const [hourFrom, setHourFrom] = useState<string>("");
   const [hourTo, setHourTo] = useState<string>("");
+
+  // Transition settings
+  const [transitionType, setTransitionType] = useState<TransitionType>("none");
+  const [transitionDuration, setTransitionDuration] = useState(0.5);
 
   // Timeline: ordered selection
   const [timeline, setTimeline] = useState<TwitchClip[]>([]);
@@ -177,13 +181,15 @@ export default function MontagePage() {
         const res = await fetch(`/api/download?slug=${encodeURIComponent(clip.id)}`);
         if (!res.ok) throw new Error(`Echec du telechargement: ${clip.title}`);
         const buffer = await res.arrayBuffer();
-        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name });
+        inputs.push({ filename: `clip${i}.mp4`, data: new Uint8Array(buffer), streamerName: clip.broadcaster_name, duration: clip.duration });
         setDlProgress({ done: i + 1, total: timeline.length });
       }
 
       setStatus("concatenating");
       setConcatProgress(0);
-      const blob = await concatenateClips(ffmpeg, inputs);
+      const transOpts: TransitionOptions | undefined =
+        transitionType !== "none" ? { type: transitionType, duration: transitionDuration } : undefined;
+      const blob = await concatenateClips(ffmpeg, inputs, transOpts);
 
       if (resultUrl) URL.revokeObjectURL(resultUrl);
       setResultUrl(URL.createObjectURL(blob));
@@ -466,6 +472,63 @@ export default function MontagePage() {
                       </button>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {/* Transition settings */}
+              {timeline.length >= 2 && status === "idle" && (
+                <div className="bg-[#18181b] rounded-lg p-3 mb-3">
+                  <p className="text-xs font-medium text-gray-400 mb-2">Transition entre clips</p>
+                  <div className="flex gap-2">
+                    <select
+                      value={transitionType}
+                      onChange={(e) => setTransitionType(e.target.value as TransitionType)}
+                      className="flex-1 bg-[#0e0e10] text-gray-300 text-xs rounded-lg px-2 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="none">Aucune (cut)</option>
+                      <optgroup label="Fondu">
+                        <option value="fade">Fondu</option>
+                        <option value="fadeblack">Fondu noir</option>
+                        <option value="fadewhite">Fondu blanc</option>
+                        <option value="dissolve">Dissolve</option>
+                      </optgroup>
+                      <optgroup label="Balayage">
+                        <option value="wipeleft">Balayage gauche</option>
+                        <option value="wiperight">Balayage droite</option>
+                        <option value="wipeup">Balayage haut</option>
+                        <option value="wipedown">Balayage bas</option>
+                      </optgroup>
+                      <optgroup label="Glissement">
+                        <option value="slideleft">Glissement gauche</option>
+                        <option value="slideright">Glissement droite</option>
+                        <option value="slideup">Glissement haut</option>
+                        <option value="slidedown">Glissement bas</option>
+                      </optgroup>
+                      <optgroup label="Autres">
+                        <option value="smoothleft">Smooth gauche</option>
+                        <option value="smoothright">Smooth droite</option>
+                        <option value="circlecrop">Cercle crop</option>
+                        <option value="circleopen">Cercle ouvert</option>
+                        <option value="circleclose">Cercle ferme</option>
+                        <option value="radial">Radial</option>
+                        <option value="pixelize">Pixelisation</option>
+                      </optgroup>
+                    </select>
+                    {transitionType !== "none" && (
+                      <select
+                        value={String(transitionDuration)}
+                        onChange={(e) => setTransitionDuration(parseFloat(e.target.value))}
+                        className="w-[80px] bg-[#0e0e10] text-gray-300 text-xs rounded-lg px-2 py-1.5 border border-gray-700 focus:border-purple-500 focus:outline-none"
+                      >
+                        <option value="0.3">0.3s</option>
+                        <option value="0.5">0.5s</option>
+                        <option value="0.8">0.8s</option>
+                        <option value="1">1s</option>
+                        <option value="1.5">1.5s</option>
+                        <option value="2">2s</option>
+                      </select>
+                    )}
+                  </div>
                 </div>
               )}
 
