@@ -21,22 +21,36 @@ export async function getFFmpeg(
     console.log("[ffmpeg]", message);
   });
 
-  // Use multi-threaded ESM core if SharedArrayBuffer is available (COOP/COEP headers on /montage)
-  // Otherwise fall back to single-threaded UMD core
-  const mt = typeof SharedArrayBuffer !== "undefined";
-  const baseURL = mt
-    ? "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm"
-    : "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+  // Try multi-threaded ESM core if SharedArrayBuffer is available (COOP/COEP headers)
+  // Fall back to single-threaded UMD core if MT fails or is unavailable
+  const canMT = typeof SharedArrayBuffer !== "undefined";
+  let loaded = false;
 
-  console.log(`[ffmpeg] Loading ${mt ? "multi-threaded" : "single-threaded"} core`);
+  if (canMT) {
+    try {
+      const mtURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm";
+      console.log("[ffmpeg] Trying multi-threaded core...");
+      await ffmpeg.load({
+        coreURL: await toBlobURL(`${mtURL}/ffmpeg-core.js`, "text/javascript"),
+        wasmURL: await toBlobURL(`${mtURL}/ffmpeg-core.wasm`, "application/wasm"),
+        workerURL: await toBlobURL(`${mtURL}/ffmpeg-core.worker.js`, "text/javascript"),
+      });
+      console.log("[ffmpeg] Multi-threaded core loaded");
+      loaded = true;
+    } catch (err) {
+      console.warn("[ffmpeg] Multi-threaded core failed, falling back to single-threaded:", err);
+    }
+  }
 
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
-    ...(mt
-      ? { workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, "text/javascript") }
-      : {}),
-  });
+  if (!loaded) {
+    const stURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd";
+    console.log("[ffmpeg] Loading single-threaded core");
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${stURL}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${stURL}/ffmpeg-core.wasm`, "application/wasm"),
+    });
+    console.log("[ffmpeg] Single-threaded core loaded");
+  }
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
@@ -111,9 +125,10 @@ export async function concatenateClips(
   const useTransition = transition && transition.type !== "none" && inputs.length >= 2;
 
   // ─── Fast path: concat demuxer (no re-encoding) ───
-  // When there are no transitions, just copy streams directly — ~90% faster
+  // When there are no transitions, try to copy streams directly — ~90% faster
+  // Falls back to re-encode if concat demuxer fails (incompatible formats)
   if (!useTransition) {
-    console.log("[ffmpeg] Using concat demuxer (no re-encoding)");
+    console.log("[ffmpeg] Trying concat demuxer (no re-encoding)...");
     const concatList = inputs.map((i) => `file '${i.filename}'`).join("\n");
     await ffmpeg.writeFile("concat.txt", concatList);
 
@@ -122,38 +137,32 @@ export async function concatenateClips(
       "-c", "copy", "output.mp4",
     ]);
 
-    if (exitCode !== 0) {
-      for (const input of inputs) {
-        try { await ffmpeg.deleteFile(input.filename); } catch { /* ignore */ }
-      }
-      try { await ffmpeg.deleteFile("concat.txt"); } catch { /* ignore */ }
-      throw new Error(`FFmpeg a echoue (code ${exitCode}). Verifiez la console pour les details.`);
+    if (exitCode === 0) {
+      console.log("[ffmpeg] Concat demuxer succeeded");
+      if (onFinalize) onFinalize();
+      const data = await ffmpeg.readFile("output.mp4");
+
+      // Cleanup
+      for (const input of inputs) { await ffmpeg.deleteFile(input.filename); }
+      await ffmpeg.deleteFile("concat.txt");
+      await ffmpeg.deleteFile("output.mp4");
+
+      const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
+      return new Blob([bytes as BlobPart], { type: "video/mp4" });
     }
 
-    if (onFinalize) onFinalize();
-    const data = await ffmpeg.readFile("output.mp4");
-
-    // Cleanup
-    for (const input of inputs) { await ffmpeg.deleteFile(input.filename); }
-    await ffmpeg.deleteFile("concat.txt");
-    await ffmpeg.deleteFile("output.mp4");
-
-    const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string);
-    return new Blob([bytes as BlobPart], { type: "video/mp4" });
+    // Concat demuxer failed (incompatible formats), fall back to re-encode
+    console.warn("[ffmpeg] Concat demuxer failed, falling back to re-encode...");
+    try { await ffmpeg.deleteFile("concat.txt"); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile("output.mp4"); } catch { /* ignore */ }
+    // Files are still in the FS, continue to re-encode path below
   }
 
-  // ─── Full re-encode path: transitions with xfade ───
-  console.log("[ffmpeg] Using filter_complex with xfade transitions");
-  const tDur = transition.duration;
+  // ─── Re-encode path: filter_complex (with or without transitions) ───
+  console.log(`[ffmpeg] Using filter_complex ${useTransition ? "with xfade transitions" : "(re-encode fallback)"}`);
+  const tDur = transition?.duration ?? 0.5;
 
-  // Probe actual durations (API durations may be rounded)
-  const actualDurations: number[] = [];
-  for (const input of inputs) {
-    const probed = await probeDuration(ffmpeg, input.filename);
-    actualDurations.push(probed > 0 ? probed : input.duration);
-  }
-
-  // Scale + pad + normalize fps/format for xfade compatibility
+  // Scale + pad + normalize for compatibility
   const filterParts: string[] = [];
 
   for (let i = 0; i < inputs.length; i++) {
@@ -162,35 +171,50 @@ export async function concatenateClips(
     );
   }
 
-  // Normalize audio
-  for (let i = 0; i < inputs.length; i++) {
-    filterParts.push(
-      `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
-    );
-  }
+  if (useTransition) {
+    // Probe actual durations (API durations may be rounded)
+    const actualDurations: number[] = [];
+    for (const input of inputs) {
+      const probed = await probeDuration(ffmpeg, input.filename);
+      actualDurations.push(probed > 0 ? probed : input.duration);
+    }
 
-  // Chain xfade filters
-  let cumulativeDur = actualDurations[0];
-  let prevLabel = "v0";
+    // Normalize audio for acrossfade
+    for (let i = 0; i < inputs.length; i++) {
+      filterParts.push(
+        `[${i}:a]aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo[a${i}]`
+      );
+    }
 
-  for (let i = 1; i < inputs.length; i++) {
-    const offset = Math.max(0, cumulativeDur - tDur - 0.05);
-    const outLabel = i === inputs.length - 1 ? "outv" : `xf${i}`;
-    filterParts.push(
-      `[${prevLabel}][v${i}]xfade=transition=${transition.type}:duration=${tDur}:offset=${offset.toFixed(3)}[${outLabel}]`
-    );
-    cumulativeDur = offset + actualDurations[i];
-    prevLabel = outLabel;
-  }
+    // Chain xfade filters
+    let cumulativeDur = actualDurations[0];
+    let prevLabel = "v0";
 
-  // Chain acrossfade for audio
-  let prevAudioLabel = "a0";
-  for (let i = 1; i < inputs.length; i++) {
-    const outLabel = i === inputs.length - 1 ? "outa" : `af${i}`;
+    for (let i = 1; i < inputs.length; i++) {
+      const offset = Math.max(0, cumulativeDur - tDur - 0.05);
+      const outLabel = i === inputs.length - 1 ? "outv" : `xf${i}`;
+      filterParts.push(
+        `[${prevLabel}][v${i}]xfade=transition=${transition!.type}:duration=${tDur}:offset=${offset.toFixed(3)}[${outLabel}]`
+      );
+      cumulativeDur = offset + actualDurations[i];
+      prevLabel = outLabel;
+    }
+
+    // Chain acrossfade for audio
+    let prevAudioLabel = "a0";
+    for (let i = 1; i < inputs.length; i++) {
+      const outLabel = i === inputs.length - 1 ? "outa" : `af${i}`;
+      filterParts.push(
+        `[${prevAudioLabel}][a${i}]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
+      );
+      prevAudioLabel = outLabel;
+    }
+  } else {
+    // Simple concat with re-encode (fallback from concat demuxer)
+    const streamLabels = inputs.map((_, i) => `[v${i}][${i}:a]`).join("");
     filterParts.push(
-      `[${prevAudioLabel}][a${i}]acrossfade=d=${tDur}:c1=tri:c2=tri[${outLabel}]`
+      `${streamLabels}concat=n=${inputs.length}:v=1:a=1[outv][outa]`
     );
-    prevAudioLabel = outLabel;
   }
 
   const filterComplex = filterParts.join(";");
